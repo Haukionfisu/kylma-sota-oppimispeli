@@ -5,9 +5,12 @@ const announcer = document.querySelector('#announcement');
 const rules = document.querySelector('#rules');
 const sessionKey = 'kylma-sota-session';
 const codePattern = /^[A-HJ-NP-Z2-9]{6}$/;
+const opponent = 'Parisi';
+const opponentTurn = 'Parisi vuoro';
 let session;
 let view;
 let selected = null;
+let targetMode = null;
 let busy = false;
 let pollTimer;
 
@@ -112,14 +115,28 @@ function mapRegions() {
   return regions.filter(({ id }) => Object.hasOwn(view.influence, id));
 }
 
+const mapControlLabels = {
+  us: 'Yhdysvallat johtaa',
+  su: 'Neuvostoliitto johtaa',
+  tied: 'Tasan',
+  locked: 'Avautuu myöhemmin',
+};
+
+function areaLeader(id) {
+  const { us, su } = view.influence[id];
+  if (us === su) return 'tied';
+  return us > su ? 'us' : 'su';
+}
+
 function mapTable() {
   return `<table class="influence">
     <caption class="sr-only">Vaikutusvalta alueittain</caption>
     <thead><tr><th scope="col">Alue</th><th scope="col" class="faction us">Yhdysvallat</th><th scope="col" class="faction su">Neuvostoliitto</th></tr></thead>
     <tbody>${mapRegions().map(({ name, id }, index) => {
       const { us, su } = view.influence[id];
+      const leader = areaLeader(id);
       return `<tr><th scope="row">${name}</th>${index <= view.round
-        ? `<td class="faction us ${us > su ? 'lead' : ''}">${us}</td><td class="faction su ${su > us ? 'lead' : ''}">${su}</td>`
+        ? `<td class="faction us ${leader === 'us' ? 'lead' : ''}">${us}</td><td class="faction su ${leader === 'su' ? 'lead' : ''}">${su}</td>`
         : '<td colspan="2" class="muted">Avautuu myöhemmin</td>'}</tr>`;
     }).join('')}</tbody>
   </table>`;
@@ -131,6 +148,30 @@ function signed(number) {
 
 function canPlay(state) {
   return state.opening ? !state.openingReady : state.side === state.turn;
+}
+
+function turnPrompt() {
+  if (view.opening && view.openingReady) {
+    return ['Avaussiirtosi on lukittu', `Odota, että ${opponent.toLowerCase()} tekee valintansa.`];
+  }
+  if (!canPlay(view)) return [opponentTurn, 'Voit tutustua kortteihisi odottaessasi.'];
+
+  let instruction = 'Valitse yksi kortti.';
+  if (targetMode === 'influence') instruction = 'Valitse alue, jolla haluat lisätä vaikutusvaltaa.';
+  else if (targetMode === 'pressure') instruction = 'Valitse alue, jolla haluat painostaa vastustajaa.';
+  else if (selected !== null) instruction = 'Valitse, miten käytät kortin.';
+  return [view.opening ? 'Tee avaussiirtosi' : 'Sinun vuorosi', instruction];
+}
+
+function announceTurn() {
+  announcer.textContent = turnPrompt().join('. ');
+}
+
+function lastMoveFeedback() {
+  const move = view.log.findLast(({ side }) => side === view.side);
+  if (!move) return '';
+  const [summary] = move.effect.split(/(?<=\.)\s/, 1);
+  return `<p class="turn-feedback"><strong>Viimeisin siirtosi</strong> · ${summary}${move.change ? ` Jännite ${signed(move.change)}.` : ''}</p>`;
 }
 
 function eventBeneficiary(card) {
@@ -146,24 +187,18 @@ function playScreen() {
   const ownTurn = canPlay(view);
   const advanced = view.ruleset === 3;
   const recentMoves = advanced ? view.log.filter(move => move.round === view.round) : view.log.slice(-1);
-  const heading = view.opening ? 'Salainen avaus' : ownTurn ? 'Sinun vuorosi' : `Vuorossa ${sides[view.turn]}`;
-  const instruction = view.opening ? (ownTurn ? `Valitse kortti ja sen käyttötapa. Avaussiirrot paljastuvat, kun kumpikin on valinnut. ${sides[view.turn]} aloittaa.` : 'Avaussiirtosi on valittu. Odota vastustajan valintaa.')
-    : ownTurn ? 'Valitse kortti ja päätä, miten käytät sen.' : 'Voit tutustua kortteihisi odottaessasi.';
+  const [heading, instruction] = turnPrompt();
   screen.innerHTML = `
     <div class="topline"><p>Kriisi ${view.round + 1}/${timeline.length} · ${round.years}</p>
       <p>Huone <b>${view.code}</b> · Pelaat <strong class="faction ${view.side}">${view.side === 'us' ? 'Yhdysvaltoina' : 'Neuvostoliittona'}</strong></p></div>
+    <section class="turn-banner ${ownTurn ? 'your-turn' : ''}" aria-labelledby="turn-heading">
+      <h2 id="turn-heading" tabindex="-1">${heading}</h2>
+      <p id="turn-instruction">${instruction}</p>
+      ${lastMoveFeedback()}
+    </section>
     <div class="game-grid">
-      <section class="panel crisis"><h1>${round.title}</h1><p>${round.intro}</p>
-        <div class="map" aria-hidden="true"><canvas width="720" height="342"></canvas></div>
-        ${mapTable()}
-        ${advanced ? `<p class="muted">Avaruuskilvan askeleet · Yhdysvallat ${view.space.us} · Neuvostoliitto ${view.space.su}</p>` : ''}
-        <div class="jannite"><h2>Jännite <b>${view.tension}/6</b></h2>
-          <div class="meter" aria-hidden="true">${Array.from({ length: 6 }, (_, index) => `<span class="${index < view.tension ? `active ${view.tension >= 5 ? 'danger' : ''}` : ''}"></span>`).join('')}</div>
-          <p>${view.tension >= 5 ? 'Ydinsodan vaara on suuri. Jännitettä voi vielä laskea.' : 'Jos jännite jää tasolle 6/6 kierroksen lopussa, syttyy ydinsota ja molemmat häviävät.'}</p>
-        </div>
-      </section>
-      <section class="panel actions"><h2>${heading}</h2>
-        <p>${instruction}</p>
+      <section class="panel actions" aria-label="Omat kortit ja siirrot">
+        ${view.opening && ownTurn ? `<p class="opening-tip">${opponent} voi valita samaan aikaan. Avaussiirrot paljastuvat, kun molemmat ovat valinneet.</p>` : ''}
         <div class="card-grid">${view.hand.map((card, index) => `
           <button class="card" data-card="${index}" aria-pressed="false" ${ownTurn ? '' : 'disabled'}>
             <strong>${card.title}</strong>
@@ -172,23 +207,26 @@ function playScreen() {
             ${advanced ? `<span class="delta">${card.ops} ${card.ops === 1 ? 'toimintapiste' : 'toimintapistettä'} · ${regions.find(({ id }) => id === card.region).name}</span>` : ''}
             ${card.scoring ? '' : `<span class="delta">Tapahtuma · vaikutusvalta +${card.points} · jännite ${signed(card.tension)}</span>`}
           </button>`).join('')}</div>
-        ${ownTurn ? `<div class="controls"><button id="event" class="primary" disabled>Pelaa tapahtuma</button></div>
-          <div class="controls"><div><label for="target">Vaikutusvallan kohde</label><select id="target">
-            ${mapRegions().slice(0, view.round + 1).map(({ id, name }) => `<option value="${id}" ${id === round.region ? 'selected' : ''}>${name}</option>`).join('')}
-          </select></div><button id="influence" disabled>${advanced ? 'Lisää vaikutusvaltaa' : 'Lisää 2 vaikutusvaltaa'}</button>
-          ${advanced ? '<button id="pressure" disabled>Painosta</button><button id="space" disabled>Avaruuskilpa</button>' : ''}</div>
-          ${advanced ? '<p id="card-note" class="muted" aria-live="polite"></p>' : ''}` : ''}
+        ${ownTurn ? '<div id="move-options"></div>' : ''}
         <p class="error" role="status"></p>
         ${recentMoves.map(move => `<p class="latest muted"><strong>${sides[move.side]} · ${move.title} · ${move.target}</strong><br>${move.effect}</p>`).join('')}
+      </section>
+      <section class="panel crisis"><h1>${round.title}</h1><p>${round.intro}</p>
+        <div class="map" aria-hidden="true"><canvas width="720" height="342"></canvas></div>
+        <ul class="map-key" role="list" aria-label="Kartan selite">
+          ${Object.entries(mapControlLabels).map(([control, label]) => `<li data-control="${control}">${label}</li>`).join('')}
+        </ul>
+        ${mapTable()}
+        ${advanced ? `<p class="muted">Avaruuskilvan askeleet · Yhdysvallat ${view.space.us} · Neuvostoliitto ${view.space.su}</p>` : ''}
+        <div class="jannite"><h2>Jännite <b>${view.tension}/6</b></h2>
+          <div class="meter" aria-hidden="true">${Array.from({ length: 6 }, (_, index) => `<span class="${index < view.tension ? `active ${view.tension >= 5 ? 'danger' : ''}` : ''}"></span>`).join('')}</div>
+          <p>${view.tension >= 5 ? 'Ydinsodan vaara on suuri. Jännitettä voi vielä laskea.' : 'Jos jännite jää tasolle 6/6 kierroksen lopussa, syttyy ydinsota ja molemmat häviävät.'}</p>
+        </div>
       </section>
     </div>`;
   drawMap(round.region);
   if (ownTurn) {
     screen.querySelectorAll('[data-card]').forEach(card => card.addEventListener('click', () => selectCard(Number(card.dataset.card))));
-    screen.querySelector('#event').addEventListener('click', () => play('event'));
-    screen.querySelector('#influence').addEventListener('click', () => play('influence'));
-    screen.querySelector('#pressure')?.addEventListener('click', () => play('pressure'));
-    screen.querySelector('#space')?.addEventListener('click', () => play('space'));
   }
 }
 
@@ -225,63 +263,118 @@ function drawMap(activeRegion) {
     }
   }
   const locations = {
-    berlin: [13, 52, -18, -21], korea: [127, 38, 11, -22], hungary: [19, 47, 18, 8],
-    cuba: [-79, 22, 0, 6], vietnam: [108, 16, 8, 8], afghanistan: [69, 34, 0, 8],
+    berlin: [13, 52, 'northwest'], korea: [127, 38, 'north'], hungary: [19, 47, 'southwest'],
+    cuba: [-79, 22, 'south'], vietnam: [108, 16, 'south'], afghanistan: [69, 34, 'south'],
   };
-  mapRegions().forEach(({ id, name }) => {
-    const [longitude, latitude, offsetX, offsetY] = locations[id];
-    const current = id === activeRegion;
-    if (ctx) {
-      ctx.fillStyle = current ? '#ffcb78' : '#c5d6ce';
-      ctx.beginPath(); ctx.arc(x(longitude), y(latitude), current ? 5 : 3.5, 0, 2 * Math.PI); ctx.fill();
-    }
+  mapRegions().forEach(({ id, name }, index) => {
+    const [longitude, latitude, labelPosition] = locations[id];
+    const control = index <= view.round ? areaLeader(id) : 'locked';
+    const marker = document.createElement('span');
+    marker.className = `map-marker ${labelPosition}${id === activeRegion ? ' current' : ''}`;
+    marker.dataset.region = id;
+    marker.dataset.control = control;
+    marker.style.left = `${100 * x(longitude) / 720}%`;
+    marker.style.top = `${100 * y(latitude) / 342}%`;
+    marker.title = `${name} · ${mapControlLabels[control]}`;
+
+    const dot = document.createElement('span');
+    dot.className = 'map-dot';
     const label = document.createElement('span');
+    label.className = 'map-label';
     label.textContent = name;
-    if (current) label.className = 'current';
-    label.style.left = `${100 * x(longitude) / 720}%`;
-    label.style.top = `${100 * y(latitude) / 342}%`;
-    label.style.marginLeft = `${offsetX}px`;
-    label.style.marginTop = `${offsetY}px`;
-    frame.append(label);
+    marker.append(dot, label);
+    frame.append(marker);
   });
 }
 
 function selectCard(index) {
+  if (busy) return;
+  const previous = selected;
   selected = index;
-  screen.querySelectorAll('[data-card]').forEach(card => card.setAttribute('aria-pressed', Number(card.dataset.card) === index));
-  for (const id of ['event', 'influence', 'pressure', 'space']) {
-    const button = screen.querySelector(`#${id}`);
-    if (button) button.disabled = busy;
-  }
-  const card = view.hand[index];
-  if (view.ruleset !== 3 || !card) return;
-  const opposingEvent = card.owner && card.owner !== view.side;
-  screen.querySelector('#event').textContent = card.scoring ? 'Pisteytä kortin alue' : opposingEvent ? 'Pelaa vastustajan tapahtuma' : 'Pelaa tapahtuma';
-  screen.querySelector('#influence').textContent = `Lisää ${card.ops} vaikutusvaltaa`;
-  screen.querySelector('#pressure').textContent = `Painosta · enintään ${card.ops}`;
-  screen.querySelector('#card-note').textContent = opposingEvent
-    ? `${eventBeneficiary(card)} myös silloin, kun käytät kortin toimintapisteet. Avaruuskilvassa tapahtuma jää toteutumatta.`
-    : 'Painostus vähentää vastustajan vaikutusvaltaa ja nostaa jännitettä. Avaruuskilpa tuo yhden pisteen joka toisesta askeleesta.';
+  screen.querySelectorAll('[data-card]').forEach(button => {
+    const active = Number(button.dataset.card) === index;
+    button.hidden = index !== null && !active;
+    button.setAttribute('aria-pressed', active);
+  });
+  selectMode(null);
+  if (index === null) screen.querySelector(`[data-card="${previous}"]`)?.focus();
 }
 
-async function play(mode) {
-  if (!session || busy || selected === null) return;
+function selectMode(mode) {
+  const previousMode = targetMode;
+  targetMode = mode;
+  screen.querySelector('#turn-instruction').textContent = turnPrompt()[1];
+  announceTurn();
+  const options = screen.querySelector('#move-options');
+  if (selected === null) {
+    options.replaceChildren();
+    return;
+  }
+
+  const card = view.hand[selected];
+  const advanced = view.ruleset === 3;
+  const opposingEvent = card.owner && card.owner !== view.side;
+  const influence = `Lisää ${advanced ? card.ops : 2} vaikutusvaltaa`;
+  const event = card.scoring ? 'Pisteytä kortin alue' : opposingEvent ? 'Pelaa vastustajan tapahtuma' : 'Pelaa tapahtuma';
+  if (mode) {
+    const currentRegion = roundsFor(view.ruleset)[view.round].region;
+    options.innerHTML = `<div class="controls">
+      <div><label for="target">Kohdealue</label><select id="target">
+        ${mapRegions().slice(0, view.round + 1).map(({ id, name }) => `<option value="${id}" ${id === currentRegion ? 'selected' : ''}>${name}</option>`).join('')}
+      </select></div>
+      <button id="confirm-target" class="primary">${mode === 'influence' ? influence : 'Painosta valitulla alueella'}</button>
+    </div>
+    ${opposingEvent ? `<p class="card-note muted">${eventBeneficiary(card)} myös tässä siirrossa.</p>` : ''}
+    <button id="change-mode" class="quiet change-choice">Vaihda käyttötapaa</button>`;
+    options.querySelector('#confirm-target').addEventListener('click', () => play(mode, options.querySelector('#target').value));
+    options.querySelector('#change-mode').addEventListener('click', () => selectMode(null));
+    options.querySelector('#target').focus();
+    return;
+  }
+
+  options.innerHTML = `<div class="controls">
+    <button id="event">${event}</button>
+    <button id="influence">${influence}</button>
+    ${advanced ? '<button id="pressure">Painosta</button><button id="space">Avaruuskilpa</button>' : ''}
+  </div>
+  ${advanced ? `<p class="card-note muted">${opposingEvent
+    ? `${eventBeneficiary(card)} myös silloin, kun lisäät vaikutusvaltaa tai painostat. Avaruuskilvassa tapahtuma jää toteutumatta.`
+    : 'Painostus vähentää vastustajan vaikutusvaltaa ja nostaa jännitettä. Avaruuskilpa tuo yhden pisteen joka toisesta askeleesta.'}</p>` : ''}
+  <button id="change-card" class="quiet change-choice">Vaihda korttia</button>`;
+  options.querySelector('#event').addEventListener('click', () => play('event'));
+  options.querySelector('#influence').addEventListener('click', () => selectMode('influence'));
+  options.querySelector('#pressure')?.addEventListener('click', () => selectMode('pressure'));
+  options.querySelector('#space')?.addEventListener('click', () => play('space'));
+  options.querySelector('#change-card').addEventListener('click', () => selectCard(null));
+  options.querySelector(`#${previousMode ?? 'event'}`).focus();
+}
+
+async function play(mode, target) {
+  if (!session || busy || selected === null || !canPlay(view)) return;
   busy = true;
   showError('');
-  selectCard(selected);
+  const controls = screen.querySelector('#move-options');
+  const submitButton = document.activeElement;
+  screen.querySelector('#turn-instruction').textContent = 'Lähetetään siirtoa…';
+  controls.setAttribute('inert', '');
+  screen.querySelector('.card-grid').setAttribute('inert', '');
   const active = session;
   try {
-    const target = screen.querySelector('#target').value;
     const result = await api(`/${active.code}/turn`, {
       method: 'POST', token: active.token,
       body: { mode, target, card: selected, version: view.version, opening: view.opening },
     });
-    if (active === session) showState(result);
+    if (active === session) showState(result, true);
   } catch (error) {
     if (active === session) showError(error.status ? error.message : 'Yhteys katkesi. Tarkistetaan pelin tilanne.');
   } finally {
     busy = false;
-    if (selected !== null && view && canPlay(view) && screen.querySelector('#event')) selectCard(selected);
+    if (controls.isConnected) {
+      controls.removeAttribute('inert');
+      screen.querySelector('.card-grid').removeAttribute('inert');
+      screen.querySelector('#turn-instruction').textContent = turnPrompt()[1];
+      if (document.activeElement === document.body) submitButton?.focus({ preventScroll: true });
+    }
   }
 }
 
@@ -306,19 +399,45 @@ function militaryDeathsTable(rows) {
   </table>`;
 }
 
+const gameEndings = {
+  us: {
+    title: 'Yhdysvallat voitti',
+    effect: 'Pelin maailmassa Neuvostoliitto romahtaa ja Yhdysvallat jää maailman ainoaksi supervallaksi.',
+    history: 'Historiassa Neuvostoliitto hajosi vuonna 1991.',
+  },
+  tie: {
+    title: 'Tasapeli',
+    effect: 'Pelin maailmassa Neuvostoliitto säilyy. Suurvallat ovat tasaväkisiä, ja niiden kilpailu jatkuu.',
+  },
+  su: {
+    title: 'Neuvostoliitto voitti',
+    effect: 'Pelin maailmassa kommunismin vaikutus laajenee. Yhdysvallat säilyy suurvaltana.',
+  },
+  nuclear: {
+    title: 'Molemmat hävisivät',
+    effect: 'Jännite oli kriisin lopussa tasolla 6/6. Pelin maailmassa Yhdysvaltojen ja Neuvostoliiton välille syttyi täysimittainen ydinsota.',
+  },
+};
+
 function endScreen() {
   const { us, su } = view.scores;
   const timeline = roundsFor(view.ruleset);
-  const nuclearWar = view.phase === 'escalated';
-  const result = nuclearWar ? 'Jännite oli kierroksen lopussa tasolla 6/6. Pelissä Yhdysvaltojen ja Neuvostoliiton välille syttyi täysimittainen ydinsota. Molemmat hävisivät.'
-    : us === su ? 'Vaikutusvaltakamppailu päättyi tasapeliin.' : `Vaikutusvaltakamppailun voitti ${sides[us > su ? 'us' : 'su']}.`;
+  const scoreResult = us === su ? 'tie' : us > su ? 'us' : 'su';
+  const outcome = view.phase === 'escalated' ? 'nuclear' : scoreResult;
+  const result = gameEndings[outcome];
   screen.innerHTML = `
-    <section class="ending"><h1>Mitä ihmisille tapahtui?</h1>
-      <div class="panel"><h2>Pelin tulos</h2><p>${result}</p>
-        <p><span class="faction us">Yhdysvallat ${us} p.</span> · <span class="faction su">Neuvostoliitto ${su} p.</span></p>
-        ${view.bonus ? `<p class="muted">Pisteytyskorteista ja avaruuskilvasta · Yhdysvallat ${view.bonus.us} p. · Neuvostoliitto ${view.bonus.su} p.</p>` : ''}
-      </div>
-      ${nuclearWar ? nuclearEnding(timeline[view.round]) : ''}
+    <section class="ending">
+      <header class="panel ending-outcome" data-outcome="${outcome}">
+        <h1>${result.title}</h1>
+        <p class="ending-effect">${result.effect}</p>
+        ${result.history ? `<p class="ending-history muted">${result.history}</p>` : ''}
+        <p class="ending-scores"><strong>${outcome === 'nuclear' ? 'Pisteet sodan syttyessä' : 'Loppupisteet'}</strong>
+          <span class="faction us">Yhdysvallat ${us} p.</span> <span class="faction su">Neuvostoliitto ${su} p.</span></p>
+        ${view.bonus ? `<p class="ending-bonus muted">Pisteytyskorteista ja avaruuskilvasta · Yhdysvallat ${view.bonus.us} p. · Neuvostoliitto ${view.bonus.su} p.</p>` : ''}
+        ${lastMoveFeedback()}
+      </header>
+      ${outcome === 'nuclear' ? nuclearEnding(timeline[view.round]) : ''}
+      <h2>Mitä ihmisille tapahtui?</h2>
       <p class="muted">Jokaisessa kriisissä näkyvät pelinne päätökset ja historialliset tiedot kuolleista. Luvuissa voi olla eri rajauksia.</p>
       <div class="results">${timeline.map((round, index) => {
         const moves = view.log.filter(move => move.round === index);
@@ -341,7 +460,7 @@ function endScreen() {
   screen.querySelector('#leave').addEventListener('click', () => leave());
 }
 
-function showState(next) {
+function showState(next, submitted = false) {
   if (view && next.version <= view.version) return;
   // The other player's secret choice changes the version but leaves this player's controls intact.
   if (view?.opening && next.opening && view.round === next.round && !view.openingReady && !next.openingReady) {
@@ -350,12 +469,14 @@ function showState(next) {
   }
   view = next;
   selected = null;
+  targetMode = null;
   if (next.phase === 'waiting') {
     waiting();
     announce('Pelihuone luotu. Odotetaan paria.');
   } else if (next.phase === 'playing') {
     playScreen();
-    announce(`Kriisi ${view.round + 1}. ${view.opening ? 'Salainen avaus.' : canPlay(view) ? 'Sinun vuorosi.' : `Vuorossa ${sides[view.turn]}.`}`);
+    announceTurn();
+    if (submitted) screen.querySelector('#turn-heading').focus({ preventScroll: true });
   } else {
     endScreen();
     screen.querySelector('h1').tabIndex = -1;

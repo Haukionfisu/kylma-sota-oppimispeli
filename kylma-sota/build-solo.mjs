@@ -15,7 +15,6 @@ function section(first, last) {
 
 const ui = (section('function mapRegions(', 'async function play(') + section('function nuclearEnding(', 'function showState('))
   .replace('<p>Huone <b>${view.code}</b> · Pelaat', '<p>Pelaat')
-  .replace('`Vuorossa ${sides[view.turn]}`', "'Tietokoneen vuoro'")
   .replace('Keskustele parisi kanssa', 'Pohdi pelin jälkeen')
   .replace('Palaa aloitukseen</button>', 'Pelaa uudelleen</button>');
 

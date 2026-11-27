@@ -3,10 +3,13 @@ const announcer = document.querySelector('#announcement');
 const rules = document.querySelector('#rules');
 const playerToken = 'human';
 const botToken = 'computer';
+const opponent = 'Tietokone';
+const opponentTurn = 'Tietokoneen vuoro';
 const busy = false;
 let game;
 let view;
 let selected = null;
+let targetMode = null;
 let botTimer;
 
 document.querySelector('#rules-open').addEventListener('click', () => rules.showModal());
@@ -36,11 +39,18 @@ function start() {
 
 function refresh(focusHeading = false) {
   clearTimeout(botTimer);
+  const next = roomView(game, playerToken);
+  // The computer's secret choice leaves the player's draft in place.
+  if (!focusHeading && view?.opening && next.opening && view.round === next.round && !view.openingReady && !next.openingReady) {
+    view = next;
+    return;
+  }
   selected = null;
-  view = roomView(game, playerToken);
+  targetMode = null;
+  view = next;
   if (view.phase === 'playing') {
     playScreen();
-    announcer.textContent = `${rounds[view.round].title}. ${view.opening ? 'Salainen avaus.' : canPlay(view) ? 'Sinun vuorosi.' : 'Tietokoneen vuoro.'}`;
+    announceTurn();
     if (view.opening ? !game.queued.su : view.turn === 'su') botTimer = setTimeout(botTurn, 600);
   } else {
     endScreen();
@@ -48,20 +58,20 @@ function refresh(focusHeading = false) {
     announcer.textContent = 'Peli päättyi. Voit lukea kriisien seuraukset.';
   }
   if (focusHeading) {
-    const heading = screen.querySelector('h1');
+    const heading = screen.querySelector('#turn-heading') ?? screen.querySelector('h1');
     heading.tabIndex = -1;
     heading.focus({ preventScroll: true });
     window.scrollTo(0, 0);
-  } else if (canPlay(view)) {
-    screen.querySelector('[data-card]')?.focus({ preventScroll: true });
+  } else {
+    screen.querySelector('#turn-heading').focus({ preventScroll: true });
   }
 }
 
-function play(mode) {
+function play(mode, target) {
   if (!game || game.phase !== 'playing' || !canPlay(view) || selected === null) return;
   const before = game.round;
   takeTurn(game, playerToken, {
-    card: selected, mode, target: screen.querySelector('#target').value, version: game.version, opening: view.opening,
+    card: selected, mode, target, version: game.version, opening: view.opening,
   });
   refresh(game.round !== before);
 }
