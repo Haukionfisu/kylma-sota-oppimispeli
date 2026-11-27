@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102226">
+  <meta name="description" content="Kahden pelaajan oppimispeli kylmästä sodasta.">
+  <title>Kylmä sota – oppimispeli</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header class="masthead">
+    <a href="/" class="brand" aria-label="Kylmä sota, aloitussivu"><span class="seal" aria-hidden="true"></span>Kylmä sota</a>
+    <button id="rules-open" class="quiet">Peliohje</button>
+  </header>
+  <main id="screen" class="shell" aria-label="Kylmä sota – oppimispeli"></main>
+  <p id="announcement" class="sr-only" role="status" aria-atomic="true"></p>
+  <dialog id="rules" aria-labelledby="rules-title">
+    <h2 id="rules-title">Peliohje</h2>
+    <ol>
+      <li>Aloitat kriisin kolmella kortilla. Ensin molemmat valitsevat salaisen avaussiirron. Peli toteuttaa avaukset, ja sen jälkeen kumpikin tekee vielä yhden siirron. Säästät kolmannen kortin seuraavaan kriisiin ja saat kaksi uutta.</li>
+      <li>Pelaa kortin tapahtuma tai käytä kortin toimintapisteet vaikutusvallan lisäämiseen tai painostamiseen avatulla alueella. Painostus vähentää vastustajan vaikutusvaltaa. Yksi siirto voi nostaa jännitettä enintään yhdellä.</li>
+      <li>Jos käytät vastustajan korttia toimintapisteisiin, myös sen tapahtuma toteutuu. Avaruuskilvassa kortin tapahtuma jää toteutumatta. Joka toinen askel avaruuskilvassa tuo yhden voittopisteen.</li>
+      <li>Pisteytyskortti antaa tapahtumana pisteen kortin alueella johtavalle suurvallalle. Pelin lopussa jokaisesta alueesta saa lisäksi yhden pisteen, jos siellä on enemmän vaikutusvaltaa kuin vastustajalla.</li>
+      <li>Jos jännite on kriisin lopussa tasolla 6/6, syttyy ydinsota ja molemmat häviävät.</li>
+    </ol>
+    <p>Vaikutusvalta kertoo, kuinka vahva asema suurvallalla on alueella. Jännite kertoo, kuinka lähellä suurvallat ovat suoraa yhteenottoa.</p>
+    <form method="dialog"><button class="primary">Selvä</button></form>
+  </dialog>
+</body>
+</html>
